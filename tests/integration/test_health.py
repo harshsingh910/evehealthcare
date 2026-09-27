@@ -70,3 +70,18 @@ def test_request_id_middleware(client: TestClient):
     response2 = client.get("/health")
     assert "X-Request-ID" in response2.headers
     assert len(response2.headers["X-Request-ID"]) > 0
+
+
+def test_openapi_security_scheme_http_bearer(client: TestClient):
+    response = client.get("/openapi.json")
+    assert response.status_code == 200
+    schema = response.json()
+    security_schemes = schema.get("components", {}).get("securitySchemes", {})
+    assert "BearerAuth" in security_schemes
+    bearer_config = security_schemes["BearerAuth"]
+    assert bearer_config["type"] == "http"
+    assert bearer_config["scheme"] == "bearer"
+    assert bearer_config["bearerFormat"] == "JWT"
+    # Ensure OAuth2 password flow is NOT used
+    assert "OAuth2PasswordBearer" not in security_schemes
+
