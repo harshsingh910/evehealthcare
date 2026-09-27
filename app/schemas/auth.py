@@ -14,6 +14,18 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class RefreshRequest(BaseModel):
+    """Request body for token refresh."""
+    refresh_token: str = Field(..., description="JWT refresh token obtained at login")
+
+
 class TokenResponse(BaseModel):
     access_token: str
+    token_type: str = "bearer"
+
+
+class TokenPairResponse(BaseModel):
+    """Full token pair returned on login — includes both access and refresh tokens."""
+    access_token: str
+    refresh_token: str
     token_type: str = "bearer"

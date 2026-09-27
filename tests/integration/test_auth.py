@@ -68,6 +68,7 @@ class TestLogin:
         assert response.status_code == 200
         data = response.json()
         assert "access_token" in data
+        assert "refresh_token" in data
         assert data["token_type"] == "bearer"
 
     def test_login_wrong_password(self, client):
@@ -91,7 +92,7 @@ class TestLogin:
 
     def test_login_rate_limited(self, client):
         from unittest.mock import patch, MagicMock
-        with patch("app.routers.auth.get_redis_client") as mock_redis:
+        with patch("app.utils.rate_limiter.get_redis_client") as mock_redis:
             mock_client = MagicMock()
             mock_client.get.return_value = "5"
             mock_redis.return_value = mock_client
@@ -101,11 +102,11 @@ class TestLogin:
                 "password": "Password@123",
             })
             assert response.status_code == 429
-            assert "Too many login attempts" in response.json()["detail"]
+            assert "Too many requests" in response.json()["detail"]
 
     def test_login_rate_limiting_pipeline_and_graceful_degradation(self, client):
         from unittest.mock import patch, MagicMock
-        with patch("app.routers.auth.get_redis_client") as mock_redis:
+        with patch("app.utils.rate_limiter.get_redis_client") as mock_redis:
             mock_client = MagicMock()
             mock_client.get.return_value = "0"
             mock_pipe = MagicMock()
@@ -156,4 +157,91 @@ class TestMe:
         response = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"})
         assert response.status_code == 401
         assert "User not found" in response.json()["detail"]
+
+
+class TestRefreshToken:
+    def test_refresh_success(self, client):
+        """Valid refresh token returns a new access token."""
+        signup = client.post("/api/v1/auth/signup", json={
+            "name": "Refresh Test",
+            "email": "integ_refresh@example.com",
+            "password": "Password@123",
+        })
+        assert signup.status_code == 201
+
+        login = client.post("/api/v1/auth/login", json={
+            "email": "integ_refresh@example.com",
+            "password": "Password@123",
+        })
+        assert login.status_code == 200
+        refresh_token = login.json()["refresh_token"]
+
+        response = client.post("/api/v1/auth/refresh", json={"refresh_token": refresh_token})
+        assert response.status_code == 200
+        data = response.json()
+        assert "access_token" in data
+        assert data["token_type"] == "bearer"
+
+    def test_refresh_with_invalid_token(self, client):
+        """Invalid refresh token returns 401."""
+        response = client.post("/api/v1/auth/refresh", json={"refresh_token": "notavalidtoken"})
+        assert response.status_code == 401
+
+    def test_refresh_with_access_token_fails(self, client):
+        """Using an access token as a refresh token is rejected."""
+        signup = client.post("/api/v1/auth/signup", json={
+            "name": "Refresh Reject",
+            "email": "integ_refresh_reject@example.com",
+            "password": "Password@123",
+        })
+        assert signup.status_code == 201
+
+        login = client.post("/api/v1/auth/login", json={
+            "email": "integ_refresh_reject@example.com",
+            "password": "Password@123",
+        })
+        # Try using the access token as a refresh token — must fail
+        access_token = login.json()["access_token"]
+        response = client.post("/api/v1/auth/refresh", json={"refresh_token": access_token})
+        assert response.status_code == 401
+
+    def test_refresh_missing_body(self, client):
+        """Missing refresh_token field returns 422."""
+        response = client.post("/api/v1/auth/refresh", json={})
+        assert response.status_code == 422
+
+
+class TestLogout:
+    def test_logout_success(self, client, auth_headers):
+        """Logout returns 204 and the token is revoked."""
+        response = client.post("/api/v1/auth/logout", headers=auth_headers)
+        assert response.status_code == 204
+
+    def test_logout_unauthenticated(self, client):
+        """Logout without a token returns 401."""
+        response = client.post("/api/v1/auth/logout")
+        assert response.status_code == 401
+
+    def test_logout_token_rejected_after_blocklist(self, client):
+        """After logout, the same token cannot be used (if Redis blocklists it)."""
+        from unittest.mock import patch
+
+        # Create user and log in
+        client.post("/api/v1/auth/signup", json={
+            "name": "Logout Block",
+            "email": "integ_logout_block@example.com",
+            "password": "Password@123",
+        })
+        login = client.post("/api/v1/auth/login", json={
+            "email": "integ_logout_block@example.com",
+            "password": "Password@123",
+        })
+        token = login.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        # Simulate Redis having the token JTI in the blocklist
+        with patch("app.dependencies.auth.is_token_blocklisted", return_value=True):
+            response = client.get("/api/v1/auth/me", headers=headers)
+            assert response.status_code == 401
+            assert "revoked" in response.json()["detail"]
 

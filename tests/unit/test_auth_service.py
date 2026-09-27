@@ -42,12 +42,14 @@ class TestAuthServiceLogin:
             email="auth_login_test@example.com",
             password="Password@123",
         )
-        token = service.login(
+        access_token, refresh_token = service.login(
             email="auth_login_test@example.com",
             password="Password@123",
         )
-        assert token is not None
-        assert len(token) > 0
+        assert access_token is not None
+        assert len(access_token) > 0
+        assert refresh_token is not None
+        assert len(refresh_token) > 0
 
     def test_login_wrong_password(self, db_session):
         service = AuthService(db_session)

@@ -25,11 +25,15 @@ class Settings(BaseSettings):
     # JWT Authentication
     SECRET_KEY: str = Field(default="change-me-to-a-real-secret-key-in-production")
     ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(default=30)
+    REFRESH_TOKEN_EXPIRE_DAYS: int = Field(default=7)
     JWT_ALGORITHM: str = Field(default="HS256")
 
     # Rate Limiting (Redis-based)
     RATE_LIMIT_LOGIN_ATTEMPTS: int = Field(default=5)
     RATE_LIMIT_WINDOW_SECONDS: int = Field(default=60)
+    # Payments get a separate, stricter window to prevent payment flooding/abuse.
+    RATE_LIMIT_PAYMENT_ATTEMPTS: int = Field(default=10)
+    RATE_LIMIT_PAYMENT_WINDOW_SECONDS: int = Field(default=60)
 
     # Cache TTL
     CACHE_TTL_SECONDS: int = Field(default=300)
