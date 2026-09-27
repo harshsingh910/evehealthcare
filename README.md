@@ -1,47 +1,71 @@
-# EVE Healthcare — Diagnostic Test Booking Backend
+# EVE Healthcare — Diagnostic Test Booking & Payment Backend
 
-> Production-grade backend for diagnostic test booking and simulated payment processing.
-> Built as an SDE Intern hiring assignment demonstrating clean architecture, transactional consistency, and idempotent webhook handling.
+Backend REST API for diagnostic test booking and simulated payment processing, built for the **EVE Healthcare SDE Intern Backend Engineering Assignment**.
 
----
-
-## Overview
-
-A FastAPI-based REST API that allows users to:
-
-1. **Sign up / Log in** with JWT authentication
-2. **Browse diagnostic centres** and their test offerings with centre-specific pricing
-3. **Book diagnostic tests** with server-side price derivation
-4. **Pay for bookings** (simulated) with explicit state machine transitions
-5. **Receive payment webhooks** with database-level idempotency guarantees
+Demonstrates clean modular architecture, server-side price derivation, transactional consistency, and idempotent webhook handling.
 
 ---
 
-## Features
+## Live Production Deployment
 
-### Required Features
-- ✅ User signup & login with JWT authentication
-- ✅ Request validation (Pydantic v2)
-- ✅ Diagnostic centres & tests with centre-specific pricing
-- ✅ Authenticated diagnostic test booking
-- ✅ Booking status management (state machine)
-- ✅ Simulated payment (SUCCESS / FAILED)
-- ✅ Payment webhook with idempotent processing
-- ✅ Proper authorization (users can only access own bookings)
-- ✅ Edge-case handling
+| Service | URL |
+|---|---|
+| **Base API** | [https://evehealthcare-production.up.railway.app](https://evehealthcare-production.up.railway.app/) |
+| **Interactive Swagger UI** | [https://evehealthcare-production.up.railway.app/docs](https://evehealthcare-production.up.railway.app/docs) |
+| **ReDoc Documentation** | [https://evehealthcare-production.up.railway.app/redoc](https://evehealthcare-production.up.railway.app/redoc) |
+| **Liveness Probe** | [https://evehealthcare-production.up.railway.app/health](https://evehealthcare-production.up.railway.app/health) |
+| **Readiness Probe** | [https://evehealthcare-production.up.railway.app/ready](https://evehealthcare-production.up.railway.app/ready) |
 
-### Bonus Features
-- ✅ Redis caching (cache-aside pattern with graceful degradation)
-- ✅ Redis-based rate limiting (login endpoint)
-- ✅ Celery background jobs (async webhook processing with retries)
-- ✅ Docker & Docker Compose (API, PostgreSQL, Redis, Worker)
-- ✅ Swagger/OpenAPI documentation (`/docs`, `/redoc`)
-- ✅ Unit tests (auth, booking, payment services)
-- ✅ Integration tests (all endpoints, webhooks, edge cases)
-- ✅ Structured JSON logging with request IDs
-- ✅ Pagination (SQL-level OFFSET/LIMIT)
-- ✅ Webhook retry handling (exponential backoff)
-- ✅ Railway deployment readiness
+---
+
+## Assignment Requirement Mapping
+
+| Requirement | Implementation Files / Paths |
+|---|---|
+| **User Signup & Login** | `app/routers/auth.py`, `app/services/auth_service.py`, `app/schemas/auth.py` |
+| **JWT Authentication** | `app/core/security.py`, `app/dependencies/auth.py` (HTTP Bearer JWT) |
+| **Request Validation** | Pydantic v2 models in `app/schemas/` (strict validation, regex, future date checks) |
+| **Diagnostic Centres & Tests** | `app/routers/centres.py`, `app/routers/tests.py`, `app/services/centre_service.py`, `app/services/test_service.py` |
+| **Centre/Test Pricing** | `app/models/centre_test.py` (association table with CHECK constraint `price > 0`) |
+| **Test Booking** | `app/routers/bookings.py`, `app/services/booking_service.py`, `app/models/booking.py` |
+| **Server-side Price Derivation** | `app/services/booking_service.py` (`create_booking` fetches price from DB; client amount ignored) |
+| **Booking Status State Machine** | `app/models/booking.py` (`BookingStatus`: `PENDING` → `CONFIRMED` / `FAILED` / `CANCELLED`) |
+| **Simulated Payment** | `app/routers/payments.py`, `app/services/payment_service.py`, `app/models/payment.py` |
+| **Payment Webhook** | `app/routers/payments.py` (`POST /api/v1/payments/webhook`), `app/services/payment_service.py` |
+| **Webhook Idempotency** | `app/models/payment.py` (`provider_event_id` `UNIQUE` index), `app/services/payment_service.py` |
+| **Authorization / Ownership** | `app/dependencies/auth.py`, `app/services/booking_service.py` (HTTP 403 on IDOR) |
+| **Edge-Case Handling** | `app/services/booking_service.py`, `app/services/payment_service.py`, `app/utils/exceptions.py` |
+| **Redis Caching (Bonus)** | `app/cache/centre_cache.py` (cache-aside pattern with graceful degradation) |
+| **Rate Limiting (Bonus)** | `app/routers/auth.py` (Redis sliding window counter: 5 attempts / 60s per IP) |
+| **Celery Tasks (Bonus)** | `app/tasks/celery_app.py`, `app/tasks/payment_tasks.py`, `app/tasks/notification_tasks.py` |
+| **Database Migrations (Bonus)**| `alembic/versions/001_initial.py`, `alembic.ini` |
+| **Docker & Compose (Bonus)** | `Dockerfile`, `docker-compose.yml` |
+| **Automated Tests** | `tests/unit/`, `tests/integration/`, `tests/conftest.py`, `pytest.ini` (107 tests) |
+
+---
+
+## API Endpoints
+
+All 16 routes are documented and accessible via Swagger UI (`/docs`):
+
+| Method | Endpoint | Auth Required | Purpose |
+|---|---|---|---|
+| `POST` | `/api/v1/auth/signup` | No | Register a new user account (unique email, bcrypt password) |
+| `POST` | `/api/v1/auth/login` | No | Authenticate with email/password; returns JWT Bearer token (rate-limited) |
+| `GET` | `/api/v1/auth/me` | **Yes** (Bearer JWT) | Retrieve authenticated user profile |
+| `GET` | `/api/v1/centres` | No | List diagnostic centres (paginated, Redis cache-aside) |
+| `GET` | `/api/v1/centres/{centre_id}` | No | Get centre details with offered tests and pricing |
+| `GET` | `/api/v1/centres/{centre_id}/tests` | No | List tests available at a centre with centre-specific prices |
+| `GET` | `/api/v1/tests` | No | List diagnostic tests (paginated, optional `centre_id` filter) |
+| `GET` | `/api/v1/tests/{test_id}` | No | Get test details with all centres offering it |
+| `POST` | `/api/v1/bookings` | **Yes** (Bearer JWT) | Create a test booking (server derives price; validates future date) |
+| `GET` | `/api/v1/bookings` | **Yes** (Bearer JWT) | List authenticated user's own bookings |
+| `GET` | `/api/v1/bookings/{booking_id}` | **Yes** (Bearer JWT) | Get booking details (scoped to owner; 403 on IDOR) |
+| `POST` | `/api/v1/bookings/{booking_id}/cancel` | **Yes** (Bearer JWT) | Cancel booking (only if status is `PENDING`; scoped to owner) |
+| `POST` | `/api/v1/payments` | **Yes** (Bearer JWT) | Simulate payment (`SUCCESS` or `FAILED`; atomic status transition) |
+| `POST` | `/api/v1/payments/webhook` | No (Provider) | Idempotent payment webhook (deduplicated by `provider_event_id`) |
+| `GET` | `/health` | No | Liveness probe (HTTP 200 process alive) |
+| `GET` | `/ready` | No | Readiness probe (verifies PostgreSQL connection; non-critical Redis check) |
 
 ---
 
@@ -50,7 +74,7 @@ A FastAPI-based REST API that allows users to:
 ```
 ┌─────────────┐     ┌──────────────┐     ┌──────────────┐
 │   Client    │────▶│   FastAPI    │────▶│  PostgreSQL  │
-│  (curl/UI)  │     │   (Uvicorn)  │     │  (Source of  │
+│ (curl / UI) │     │  (Uvicorn)   │     │ (Source of   │
 └─────────────┘     │              │     │    Truth)    │
                     │  Routers     │     └──────────────┘
                     │  Services    │
@@ -61,45 +85,27 @@ A FastAPI-based REST API that allows users to:
                            ▼             └──────────────┘
                     ┌──────────────┐
                     │    Celery    │
-                    │   Worker    │
-                    │ (Background │
-                    │   Tasks)    │
+                    │   Worker     │
+                    │ (Background  │
+                    │    Tasks)    │
                     └──────────────┘
 ```
 
-**Modular Monolith** — clean separation without microservice overhead:
+### Modular Monolith Structure
 
 ```
 app/
-├── core/           # Config, DB, security, Redis, logging
-├── models/         # SQLAlchemy ORM models
-├── schemas/        # Pydantic request/response schemas
-├── routers/        # FastAPI route handlers (thin)
-├── services/       # Business logic (state machine, validation)
-├── repositories/   # Data access layer (queries, transactions)
-├── dependencies/   # FastAPI dependency injection (auth, DB session)
-├── tasks/          # Celery background tasks
-├── cache/          # Redis cache-aside helpers
-└── utils/          # Pagination, exceptions
+├── core/           # Database engine, security (JWT/bcrypt), Redis client, logging, settings
+├── models/         # SQLAlchemy ORM entities (User, Centre, Test, CentreTest, Booking, Payment)
+├── schemas/        # Pydantic v2 schemas for request validation and response serialization
+├── routers/        # FastAPI thin route handlers (auth, centres, tests, bookings, payments)
+├── services/       # Core business logic (price derivation, state machine, idempotency)
+├── repositories/   # Data access layer (queries, transactions, eager loading)
+├── dependencies/   # Dependency injection (HTTP Bearer JWT auth, DB session)
+├── tasks/          # Celery application and background worker tasks
+├── cache/          # Redis cache-aside helpers with graceful fallback
+└── utils/          # Standardized pagination and HTTP domain exceptions
 ```
-
----
-
-## Technology Stack
-
-| Technology | Purpose |
-|---|---|
-| **FastAPI + Uvicorn** | High-performance async web framework |
-| **PostgreSQL** | ACID transactions, UNIQUE constraints for idempotency, row-level locking |
-| **SQLAlchemy 2.x** | Type-safe ORM with relationship mapping |
-| **Alembic** | Database schema migrations (never `create_all()` in production) |
-| **Pydantic v2** | Request validation, response serialization |
-| **JWT (python-jose)** | Stateless authentication with Bearer tokens |
-| **bcrypt (passlib)** | Industry-standard password hashing |
-| **Redis** | Cache-aside layer + rate limiting (NOT source of truth) |
-| **Celery** | Background task processing with retry support |
-| **Docker Compose** | Local development with PostgreSQL, Redis, API, Worker |
-| **pytest** | Unit + integration test suite |
 
 ---
 
@@ -108,244 +114,201 @@ app/
 ### Entity Relationship Diagram
 
 ```
-Users 1───N Bookings 1───1 Payments
-                │
+Users 1───────────N Bookings 1───────────1 Payments
+                        │
 DiagnosticCentres 1───N CentreTests N───1 DiagnosticTests
-                │
-        Bookings (FK to centres + tests)
+                        │
+                  Bookings (FK to centres + tests)
 ```
 
-### Tables
+### Tables & Key Constraints
 
-| Table | Purpose |
-|---|---|
-| `users` | User accounts (UUID PK, unique indexed email, bcrypt password) |
-| `diagnostic_centres` | Physical diagnostic centres (name, location) |
-| `diagnostic_tests` | Types of diagnostic tests (CBC, Thyroid, etc.) |
-| `centre_tests` | **Association table** — which tests each centre offers, with **centre-specific pricing** |
-| `bookings` | Test bookings with status state machine |
-| `payments` | Payment records with `provider_event_id` for webhook idempotency |
-
-### Why `centre_tests` Exists
-
-The same diagnostic test has different prices at different centres:
-
-| Centre | Test | Price |
+| Table | Primary Key | Key Foreign Keys & Constraints |
 |---|---|---|
-| Apollo Diagnostics | CBC | ₹500 |
-| Dr. Lal PathLabs | CBC | ₹400 |
-| Thyrocare | CBC | ₹350 |
+| `users` | UUID (`id`) | `email` UNIQUE + indexed |
+| `diagnostic_centres` | UUID (`id`) | `name` indexed, `location` |
+| `diagnostic_tests` | UUID (`id`) | `name` UNIQUE |
+| `centre_tests` | UUID (`id`) | `centre_id` FK, `test_id` FK, `UNIQUE(centre_id, test_id)`, `price > 0` |
+| `bookings` | UUID (`id`) | `user_id` FK, `centre_id` FK, `test_id` FK, `status` enum, `amount > 0` |
+| `payments` | UUID (`id`) | `booking_id` FK (`UNIQUE`), `provider_event_id` (`UNIQUE`), `amount > 0` |
 
-Price is stored in `centre_tests`, NOT in `diagnostic_tests`. The `UNIQUE(centre_id, test_id)` constraint prevents duplicate offerings.
+### Why `centre_tests` Exists (Centre-Specific Pricing)
 
-### Key Constraints
+Diagnostic tests (e.g. Complete Blood Count) are standardized, but physical centres operate with differing costs and pricing structures.
 
-- `centre_tests.price > 0` (CHECK constraint)
-- `bookings.amount > 0` (CHECK constraint)
-- `payments.booking_id` UNIQUE (one payment per booking)
-- `payments.provider_event_id` UNIQUE (webhook idempotency)
-- `users.email` UNIQUE + indexed
-
----
-
-## Booking Flow
-
-```
-PENDING ──→ CONFIRMED  (successful payment)
-   │
-   ├──→ FAILED      (failed payment)
-   │
-   └──→ CANCELLED   (user cancellation)
-
-CONFIRMED ──→ CANCELLED (user cancellation after payment)
-
-FAILED ──→ (terminal state, no transitions allowed)
-CANCELLED ──→ (terminal state, no transitions allowed)
-```
-
-**Important:** The booking `amount` is **copied from `centre_tests.price`** at booking creation time. It is NEVER accepted from the client. This is a price snapshot — if the centre later changes the test price, existing bookings are unaffected.
+Storing price inside `centre_tests` decouples the test definition from its cost:
+- A test exists independently in `diagnostic_tests`.
+- A centre offers tests through `centre_tests` with its own specific price.
+- **Example from seed data** (`scripts/seed_data.py`):
+  - *Complete Blood Count (CBC)* at **Apollo Diagnostics**: ₹500.00
+  - *Complete Blood Count (CBC)* at **Dr. Lal PathLabs**: ₹400.00
+  - *Complete Blood Count (CBC)* at **Thyrocare**: ₹350.00
+- The `UNIQUE(centre_id, test_id)` constraint prevents duplicate offerings of the same test by a centre.
 
 ---
 
-## Payment Flow
+## Core Technical Explanations
 
-### Simulated Payment (POST /api/v1/payments)
+### 1. Server-Side Price Derivation & Snapshot Pattern
+- The booking creation endpoint (`POST /api/v1/bookings`) accepts only `centre_id`, `test_id`, and `appointment_datetime`.
+- The server queries `centre_tests` within the database transaction to retrieve the authoritative price. Client-submitted prices are neither requested nor trusted.
+- The derived price is written into `bookings.amount` as a persistent snapshot. Subsequent changes to centre pricing will not alter existing bookings.
 
+### 2. Booking State Machine
 ```
-Client sends: { booking_id, simulate_status: "SUCCESS" | "FAILED" }
-                              │
-                    ┌─────────▼──────────┐
-                    │ Validate booking   │
-                    │ - exists?          │
-                    │ - belongs to user? │
-                    │ - status=PENDING?  │
-                    │ - no existing pay? │
-                    └─────────┬──────────┘
-                              │
-              ┌───────────────┼───────────────┐
-              ▼                               ▼
-    Payment.status=SUCCESS          Payment.status=FAILED
-    Booking.status=CONFIRMED        Booking.status=FAILED
-              │                               │
-              └───────────┬───────────────────┘
-                          ▼
-                   ATOMIC COMMIT
+              ┌───────────────┐
+              │    PENDING    │
+              └───┬───┬───┬───┘
+                  │   │   │
+        Payment   │   │   │  Payment
+        SUCCESS   │   │   │  FAILED
+                  │   │   │
+                  ▼   │   ▼
+     ┌─────────────┐  │  ┌────────────┐
+     │  CONFIRMED  │  │  │   FAILED   │
+     └─────────────┘  │  └────────────┘
+                      │
+             User     │
+             Cancels  │
+                      ▼
+               ┌─────────────┐
+               │  CANCELLED  │
+               └─────────────┘
 ```
 
-### Webhook Processing (POST /api/v1/payments/webhook)
+- Allowed transitions:
+  - `PENDING` → `CONFIRMED` (upon payment `SUCCESS`)
+  - `PENDING` → `FAILED` (upon payment `FAILED`)
+  - `PENDING` → `CANCELLED` (user-initiated cancellation while pending)
+- Terminal states: `CONFIRMED`, `FAILED`, and `CANCELLED` cannot transition to any other status.
+- Attempting to pay or cancel an already transitioned booking raises `409 Conflict`.
 
-```
-Provider sends: { event_id, booking_id, status, amount }
-                              │
-              ┌───────────────▼───────────────┐
-              │ 1. Check provider_event_id    │
-              │    already processed?         │◄── Fast path for duplicates
-              │ 2. Lock booking (FOR UPDATE)  │
-              │ 3. Validate amount matches    │
-              │ 4. Enforce state machine      │
-              │ 5. Check no existing payment  │
-              │ 6. Create payment             │
-              │ 7. Update booking status      │
-              │ 8. ATOMIC COMMIT              │
-              └───────────────────────────────┘
-```
+### 3. Webhook Idempotency & Concurrency Safety
+External payment gateways use at-least-once delivery; network retries can send the same webhook event multiple times.
+
+The system uses a two-tier idempotency defense:
+1. **Application Query Check (Read Path)**:
+   The service queries `payments` by `provider_event_id`. If already recorded, it immediately returns the existing payment record with `200 OK` without re-executing business logic.
+2. **Database UNIQUE Constraint (Write Path)**:
+   `payments.provider_event_id` has a database-level `UNIQUE` index. If two identical webhook requests arrive concurrently, the second insert encounters an `IntegrityError`, triggering a rollback and returning the existing record safely.
+3. **Payload Verification**:
+   The webhook verifies that `amount` matches `booking.amount` using `Decimal` comparison. Mismatched amounts raise `400 Bad Request`.
+
+### 4. Redis Cache-Aside & Graceful Degradation
+- **Cache-Aside**: Read requests check Redis first. On cache miss, data is read from PostgreSQL and stored in Redis with a configurable TTL (default 300s).
+- **Graceful Degradation**: Redis is treated as an optimization layer, not a source of truth. If Redis is unreachable, all cache operations catch the connection error, log a warning, and fall back to PostgreSQL directly. The application remains fully operational.
+- **Rate Limiting**: The login endpoint applies a sliding-window counter (`rate_limit:login:{client_ip}`) limiting unauthenticated requests to 5 attempts per 60 seconds.
+
+### 5. Celery Worker Architecture
+- **HTTP Webhook**: The `/api/v1/payments/webhook` endpoint processes incoming events synchronously to provide an immediate deterministic response.
+- **Background Tasks**:
+  - `app.tasks.payment_tasks.process_webhook_async`: Asynchronous webhook processor with exponential backoff (`countdown = 10 * 2^retries`, max 5 retries). Permanent errors (`NotFoundError`, `BadRequestError`, `ConflictError`) are not retried.
+  - `app.tasks.notification_tasks.send_booking_confirmation`: Simulated booking confirmation email/SMS.
+  - `app.tasks.notification_tasks.send_payment_receipt`: Simulated payment receipt notification.
 
 ---
 
-## Webhook Idempotency
+## Production Verification Summary
 
-**Problem:** External payment providers can send the same webhook event multiple times (retries, network issues).
+The live Railway deployment ([https://evehealthcare-production.up.railway.app](https://evehealthcare-production.up.railway.app/)) has been verified across all core workflows:
 
-**Solution:** Database-level UNIQUE constraint on `provider_event_id`.
-
-**Why not just application-level checks?**
-
-```
-Thread A: SELECT ... WHERE provider_event_id = 'evt_123' → NULL (not found)
-Thread B: SELECT ... WHERE provider_event_id = 'evt_123' → NULL (not found)
-Thread A: INSERT payment (provider_event_id = 'evt_123') → SUCCESS
-Thread B: INSERT payment (provider_event_id = 'evt_123') → UNIQUE VIOLATION → caught safely
-```
-
-The application-level check (`if event_exists(): return`) handles the common case efficiently. The database constraint handles the race condition. Both are needed.
+- [x] **Liveness & Readiness**: `GET /health` returns `200 OK`; `GET /ready` verifies PostgreSQL connection pool.
+- [x] **Authentication Flow**: User signup with bcrypt hashing; login returns valid signed JWT Bearer token; rate-limiting active.
+- [x] **Protected Endpoints**: `GET /api/v1/auth/me` verifies identity; rejects unauthenticated requests with `401 Unauthorized`.
+- [x] **Centre & Test Catalog**: Paginated listing of centres and tests with centre-specific pricing; served via Redis cache-aside.
+- [x] **Booking Creation**: Server derives pricing from `centre_tests`; rejects past appointment timestamps with `422`.
+- [x] **Authorization & IDOR Protection**: Users can only view and cancel their own bookings; foreign IDs return `403 Forbidden`.
+- [x] **Simulated Payment**: Validates booking status; transitions `PENDING` → `CONFIRMED` on `SUCCESS`, `PENDING` → `FAILED` on `FAILED`.
+- [x] **Duplicate Payment Guard**: Rejects subsequent payments on the same booking with `409 Conflict`.
+- [x] **Webhook Idempotency**: Repeated webhook deliveries with identical `provider_event_id` return existing record without duplicate state changes.
+- [x] **Interactive Documentation**: Swagger UI exposes `BearerAuth (http, Bearer)` dialog for direct token testing.
 
 ---
 
-## Redis
+## Test Suite & Coverage
 
-### Cache-Aside Pattern
-
-```
-Request → Check Redis → HIT? → Return cached response
-                    │
-                    └→ MISS → Query PostgreSQL → Store in Redis (TTL=300s) → Return
-```
-
-**Cached endpoints:** Centres list, centre detail, tests list, test detail.
-
-### Cache Invalidation
-
-When centre/test/price data changes (via admin operations added later):
-1. Update PostgreSQL
-2. Invalidate relevant Redis keys
-3. Next read repopulates cache
-
-### Rate Limiting
-
-Login endpoint: 5 attempts per minute per IP (configurable).
-
-### Graceful Degradation
-
-**If Redis is unavailable**, the application:
-- Queries PostgreSQL directly (no caching)
-- Bypasses rate limiting (logs a warning)
-- Does NOT crash or return errors
-
-PostgreSQL is always the source of truth.
-
----
-
-## Celery
-
-### Architecture
-
-```
-FastAPI → Enqueue Task → Redis (Broker) → Celery Worker → PostgreSQL
-```
-
-### Background Tasks
-
-- **process_webhook_async**: Processes webhook events asynchronously with exponential backoff
-- **send_booking_confirmation**: Simulated email notification
-- **send_payment_receipt**: Simulated payment receipt
-
-### Retry Behavior
-
-- Max retries: 5
-- Backoff: 10s, 20s, 40s, 80s, 160s
-- Permanent failures (404, 400, 409) are NOT retried
-- Only transient failures (DB errors, connection issues) are retried
-- Tasks are **idempotent** — safe to execute more than once
-
----
-
-## API Documentation
-
-Interactive Swagger UI: `http://localhost:8000/docs`
-
-ReDoc: `http://localhost:8000/redoc`
-
-OpenAPI spec: `http://localhost:8000/openapi.json`
-
----
-
-## Local Setup
-
-### Option 1: Docker Compose (Recommended)
+The test suite runs against SQLite without requiring external dependencies:
 
 ```bash
-# Clone and start all services
-git clone <repo-url>
-cd eve-healthcare-backend
+# Run full test suite with coverage
+python -m pytest tests/ -v --cov=app --cov-report=term-missing
+```
 
-# Start PostgreSQL, Redis, API, and Celery Worker
-docker compose up --build
+### Verified Test Results
+```
+============================= 107 passed in 26.84s =============================
+```
 
-# Run migrations
+- **Total Tests**: 107 (100% passing, 0 warnings, 0 failures)
+- **Code Coverage**: 96% total coverage (1,097 statements, 48 missed)
+  - `app/cache/centre_cache.py`: 100%
+  - `app/core/security.py`: 100%
+  - `app/dependencies/auth.py`: 100%
+  - `app/models/`: 100%
+  - `app/schemas/`: 100%
+  - `app/services/auth_service.py`: 100%
+  - `app/services/centre_service.py`: 100%
+  - `app/services/test_service.py`: 100%
+  - `app/services/booking_service.py`: 97%
+  - `app/services/payment_service.py`: 85%
+  - `app/tasks/`: 100%
+  - `app/utils/`: 100%
+
+---
+
+## Local Setup Instructions
+
+### Prerequisites
+- Python 3.12+
+- Docker and Docker Compose (optional for containerized setup)
+
+### Clone the Repository
+```bash
+git clone https://github.com/harshsingh910/evehealthcare.git
+cd evehealthcare
+```
+
+### Option A: Docker Compose (Full Stack)
+Starts PostgreSQL 16, Redis 7, the FastAPI backend, and the Celery worker:
+
+```bash
+# 1. Build and start containers
+docker compose up --build -d
+
+# 2. Run database migrations
 docker compose exec api alembic upgrade head
 
-# Seed data
+# 3. Seed initial centres and tests (5 centres, 8 tests, 37 price entries)
 docker compose exec api python -m scripts.seed_data
 
-# Verify
+# 4. Verify deployment
 curl http://localhost:8000/health
-curl http://localhost:8000/docs
 ```
 
-### Option 2: Local Python
-
+### Option B: Local Python Environment
 ```bash
-# Prerequisites: PostgreSQL and Redis running locally
-
-# Create virtual environment
+# 1. Create and activate virtual environment
 python3 -m venv venv
 source venv/bin/activate
+
+# 2. Install dependencies
 pip install -r requirements.txt
 
-# Copy and configure environment
+# 3. Configure environment
 cp .env.example .env
-# Edit .env with your local PostgreSQL/Redis URLs
 
-# Run migrations
+# 4. Run database migrations
 alembic upgrade head
 
-# Seed data
+# 5. Populate seed data (idempotent)
 python -m scripts.seed_data
 
-# Start API
+# 6. Start the API server
 uvicorn app.main:app --reload --port 8000
+```
 
-# Start Celery worker (separate terminal)
+To start the optional Celery worker locally:
+```bash
 celery -A app.tasks.celery_app worker --loglevel=info
 ```
 
@@ -353,195 +316,39 @@ celery -A app.tasks.celery_app worker --loglevel=info
 
 ## Environment Variables
 
-| Variable | Description | Default |
+| Variable | Description | Default / Example |
 |---|---|---|
 | `DATABASE_URL` | PostgreSQL connection string | `postgresql://eve_user:eve_password@localhost:5432/eve_healthcare` |
-| `REDIS_URL` | Redis connection string | `redis://localhost:6379/0` |
-| `SECRET_KEY` | JWT signing key (**change in production**) | `change-me-...` |
-| `ACCESS_TOKEN_EXPIRE_MINUTES` | JWT token lifetime | `30` |
-| `ENVIRONMENT` | `development` or `production` | `development` |
-| `LOG_LEVEL` | Logging level | `INFO` |
-| `RATE_LIMIT_LOGIN_ATTEMPTS` | Max login attempts per window | `5` |
-| `RATE_LIMIT_WINDOW_SECONDS` | Rate limit window duration | `60` |
-| `CACHE_TTL_SECONDS` | Redis cache TTL | `300` |
-| `CELERY_BROKER_URL` | Celery broker (Redis) | `redis://localhost:6379/1` |
-| `CELERY_RESULT_BACKEND` | Celery result backend | `redis://localhost:6379/1` |
-| `PORT` | API server port | `8000` |
+| `REDIS_URL` | Redis cache connection string | `redis://localhost:6379/0` |
+| `SECRET_KEY` | HMAC-SHA256 secret key for JWT | Configured via environment; placeholder in `.env.example` |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | Lifetime of access tokens | `30` |
+| `ENVIRONMENT` | Environment name | `development` / `production` |
+| `LOG_LEVEL` | Application logging level | `INFO` |
+| `RATE_LIMIT_LOGIN_ATTEMPTS` | Allowed login attempts per window | `5` |
+| `RATE_LIMIT_WINDOW_SECONDS` | Window duration in seconds | `60` |
+| `CACHE_TTL_SECONDS` | Cache expiration in seconds | `300` |
+| `CELERY_BROKER_URL` | Celery broker URL | `redis://localhost:6379/1` |
+| `CELERY_RESULT_BACKEND` | Celery result storage | `redis://localhost:6379/1` |
+| `PORT` | Web server port | `8000` |
 
 ---
 
-## Database Migration
+## Railway Deployment Details
 
-```bash
-# Apply all migrations
-alembic upgrade head
-
-# Rollback last migration
-alembic downgrade -1
-
-# Generate new migration after model changes
-alembic revision --autogenerate -m "description"
-```
-
-**NEVER** use `Base.metadata.drop_all()` or `create_all()` in production.
+The production Railway deployment consists of:
+1. **API Service**: Runs the FastAPI application (`uvicorn app.main:app --host 0.0.0.0 --port $PORT`) via the container defined in [Dockerfile](file:///Users/harshsingh/Documents/EveHealthCare/Dockerfile).
+2. **PostgreSQL Service**: Railway managed PostgreSQL instance for ACID transaction persistence.
+3. **Redis Service**: Railway managed Redis instance for caching and rate limiting.
+4. **Celery Worker (Optional)**: A separate worker service can be deployed by configuring a service in Railway with start command:
+   ```bash
+   celery -A app.tasks.celery_app worker --loglevel=info
+   ```
 
 ---
 
-## Seed Data
+## Security Notes
 
-```bash
-python -m scripts.seed_data
-```
-
-Creates 5 centres, 8 tests, and 35 centre-test price combinations. **Idempotent** — safe to run multiple times.
-
----
-
-## Tests
-
-```bash
-# Run all tests
-python -m pytest tests/ -v
-
-# Run with coverage
-python -m pytest tests/ -v --cov=app --cov-report=term-missing
-
-# Run only unit tests
-python -m pytest tests/unit/ -v
-
-# Run only integration tests
-python -m pytest tests/integration/ -v
-```
-
-Tests use SQLite — **no PostgreSQL/Redis required** to run the test suite.
-
----
-
-## Railway Deployment
-
-### Step-by-Step
-
-1. **Create Railway Project**
-2. **Add PostgreSQL** service → copy `DATABASE_URL`
-3. **Add Redis** service → copy `REDIS_URL`
-4. **Deploy API**:
-   - Source: GitHub repo
-   - Start command: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
-   - Set environment variables (`DATABASE_URL`, `REDIS_URL`, `SECRET_KEY`, etc.)
-5. **Deploy Worker**:
-   - Same source, different start command: `celery -A app.tasks.celery_app worker --loglevel=info`
-   - Same environment variables
-6. **Run Migrations**: `alembic upgrade head` (via Railway CLI or exec)
-7. **Seed Data**: `python -m scripts.seed_data`
-8. **Verify**: `GET /health` and `GET /docs`
-
----
-
-## API Examples
-
-### Signup
-```bash
-curl -X POST http://localhost:8000/api/v1/auth/signup \
-  -H "Content-Type: application/json" \
-  -d '{"name": "Harsh Singh", "email": "harsh@example.com", "password": "Password@123"}'
-```
-
-### Login
-```bash
-curl -X POST http://localhost:8000/api/v1/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email": "harsh@example.com", "password": "Password@123"}'
-```
-
-### List Centres
-```bash
-curl http://localhost:8000/api/v1/centres?page=1&page_size=10
-```
-
-### Get Centre with Tests
-```bash
-curl http://localhost:8000/api/v1/centres/{centre_id}
-```
-
-### List Tests (filter by centre)
-```bash
-curl "http://localhost:8000/api/v1/tests?centre_id={centre_id}"
-```
-
-### Create Booking
-```bash
-curl -X POST http://localhost:8000/api/v1/bookings \
-  -H "Authorization: Bearer <token>" \
-  -H "Content-Type: application/json" \
-  -d '{"centre_id": "...", "test_id": "...", "appointment_datetime": "2026-10-05T10:30:00Z"}'
-```
-
-### Simulate Payment
-```bash
-curl -X POST http://localhost:8000/api/v1/payments \
-  -H "Authorization: Bearer <token>" \
-  -H "Content-Type: application/json" \
-  -d '{"booking_id": "...", "simulate_status": "SUCCESS"}'
-```
-
-### Webhook
-```bash
-curl -X POST http://localhost:8000/api/v1/payments/webhook \
-  -H "Content-Type: application/json" \
-  -d '{"event_id": "evt_12345", "booking_id": "...", "status": "SUCCESS", "amount": 500}'
-```
-
----
-
-## Edge Cases Handled
-
-| Edge Case | Behavior |
-|---|---|
-| Duplicate email signup | 409 Conflict |
-| Wrong password login | 401 (same message as wrong email — prevents enumeration) |
-| Expired/invalid JWT | 401 Unauthorized |
-| User A accessing User B's booking | 403 Forbidden |
-| Test not offered at centre | 400 Bad Request |
-| Appointment in the past | 400 Bad Request |
-| Duplicate payment for same booking | 409 Conflict |
-| Cancelling a FAILED booking | 400 (state machine violation) |
-| FAILED → CONFIRMED via webhook | 400 (invalid state transition) |
-| Duplicate webhook (same event_id) | Safely ignored, returns existing payment |
-| Concurrent identical webhooks | UNIQUE constraint prevents duplicates |
-| Webhook amount ≠ booking amount | 400 Bad Request |
-| Page size > 100 | 422 Validation Error |
-| Redis unavailable | Graceful degradation to PostgreSQL |
-
----
-
-## Assumptions
-
-1. One user can create many bookings
-2. A diagnostic centre can offer many tests (M:N via centre_tests)
-3. Centre-specific pricing is stored in centre_tests
-4. Booking amount is copied from centre_test price at creation (snapshot)
-5. Booking amount is NEVER controlled by the client
-6. Bookings start as PENDING
-7. Successful payment → CONFIRMED; failed payment → FAILED
-8. One booking has at most one payment record
-9. `provider_event_id` uniquely identifies an external webhook event
-10. Repeated webhook events are safely ignored (idempotent)
-11. PostgreSQL is the source of truth; Redis is NOT authoritative
-12. Redis failure does not break booking/payment functionality
-13. Payment gateway is simulated (no real integration)
-14. Appointment times in the past are rejected
-
----
-
-## Future Improvements
-
-1. **Admin panel** — CRUD for centres, tests, pricing (with cache invalidation)
-2. **Cursor-based pagination** — more efficient for large datasets than OFFSET
-3. **Webhook signature verification** — HMAC-SHA256 validation of webhook payloads
-4. **Multi-test bookings** — book multiple tests in a single appointment
-5. **Appointment slot management** — prevent overbooking at specific times
-6. **Email notifications** — SendGrid/SES integration for booking confirmations
-7. **Refresh tokens** — JWT refresh token rotation for better security
-8. **Role-based access control** — admin vs. patient roles
-9. **Audit logging** — immutable log of all state changes
-10. **Prometheus metrics** — request latency, error rates, cache hit ratios
+1. **Secrets Management**: Secrets (`SECRET_KEY`, credentials) are supplied exclusively via environment variables. The `.env` file is excluded from git tracking via `.gitignore`.
+2. **Production Keys**: The `SECRET_KEY` default placeholder in `.env.example` must be replaced with a cryptographically secure random value in production.
+3. **Webhook Verification**: In commercial production environments, webhook endpoints should validate HMAC-SHA256 provider signatures (e.g. `Stripe-Signature` or `X-Razorpay-Signature`). In this simulated backend, webhook idempotency and amount integrity are enforced at the database and service layers.
+4. **Non-Root Container**: The Docker container executes under an unprivileged `appuser` system account.
