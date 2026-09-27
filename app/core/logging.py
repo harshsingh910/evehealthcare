@@ -69,6 +69,9 @@ def setup_logging() -> None:
     # Reduce noise from third-party libraries
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
     logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
+    # passlib 1.7.4 + bcrypt 4.x compatibility: bcrypt removed __about__, causing
+    # a harmless "(trapped) error reading bcrypt version" stderr message. Suppress.
+    logging.getLogger("passlib.handlers.bcrypt").setLevel(logging.ERROR)
 
 
 def get_logger(name: str) -> logging.Logger:
