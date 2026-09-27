@@ -7,6 +7,8 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
+from app.models.payment import PaymentStatus
+
 
 class PaymentCreateRequest(BaseModel):
     """
@@ -28,7 +30,7 @@ class PaymentResponse(BaseModel):
     id: uuid.UUID
     booking_id: uuid.UUID
     amount: Decimal
-    status: str
+    status: PaymentStatus
     provider_event_id: Optional[str] = None
     created_at: datetime
     updated_at: datetime

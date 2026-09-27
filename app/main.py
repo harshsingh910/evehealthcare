@@ -62,14 +62,25 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS — restrictive in production, permissive in development
+def _get_cors_origins() -> list[str]:
+    """Parse CORS origins from environment, with development/test fallback."""
+    if settings.CORS_ALLOWED_ORIGINS:
+        return [o.strip() for o in settings.CORS_ALLOWED_ORIGINS.split(",") if o.strip()]
+    if settings.ENVIRONMENT in ("development", "test"):
+        return ["*"]
+    return []
+
+
+
+# CORS — restrictive in production, configurable via CORS_ALLOWED_ORIGINS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"] if settings.ENVIRONMENT == "development" else [],
+    allow_origins=_get_cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 
 # ---------- Middleware ----------

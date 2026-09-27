@@ -29,6 +29,8 @@ from app.core.security import (
 from app.core.config import settings
 from app.repositories.user_repository import UserRepository
 from app.models.user import User
+from app.services.audit_service import AuditService
+from app.models.audit_log import AuditEventType
 from app.utils.exceptions import ConflictError, UnauthorizedError
 from app.core.logging import get_logger
 
@@ -37,7 +39,9 @@ logger = get_logger(__name__)
 
 class AuthService:
     def __init__(self, db: Session):
+        self.db = db
         self.repo = UserRepository(db)
+        self.audit = AuditService(db)
 
     def signup(self, name: str, email: str, password: str) -> User:
         """
@@ -52,6 +56,17 @@ class AuthService:
 
         hashed = hash_password(password)
         user = self.repo.create(name=name, email=email, hashed_password=hashed)
+        self.audit.log(
+            event_type=AuditEventType.USER_SIGNUP,
+            actor_user_id=user.id,
+            entity_type="user",
+            entity_id=str(user.id),
+            metadata={"email": email},
+        )
+        try:
+            self.db.commit()
+        except Exception:
+            pass
         logger.info("User registered", extra={"event": "user_signup", "user_id": str(user.id)})
         return user
 
@@ -64,12 +79,33 @@ class AuthService:
         """
         user = self.repo.get_by_email(email)
         if not user or not verify_password(password, user.hashed_password):
+            self.audit.log(
+                event_type=AuditEventType.LOGIN_FAILURE,
+                actor_user_id=user.id if user else None,
+                entity_type="user",
+                metadata={"email": email},
+            )
+            try:
+                self.db.commit()
+            except Exception:
+                pass
             raise UnauthorizedError(detail="Invalid email or password")
 
         access_token = create_access_token(subject=str(user.id))
         refresh_token = create_refresh_token(subject=str(user.id))
+        self.audit.log(
+            event_type=AuditEventType.LOGIN_SUCCESS,
+            actor_user_id=user.id,
+            entity_type="user",
+            entity_id=str(user.id),
+        )
+        try:
+            self.db.commit()
+        except Exception:
+            pass
         logger.info("User logged in", extra={"event": "user_login", "user_id": str(user.id)})
         return access_token, refresh_token
+
 
     def refresh(self, refresh_token: str) -> str:
         """

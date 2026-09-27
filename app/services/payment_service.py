@@ -19,6 +19,10 @@ CRITICAL DESIGN DECISIONS:
 
 5. STATE MACHINE ENFORCEMENT: Webhooks cannot transition bookings from
    invalid states (e.g., FAILED → CONFIRMED is rejected).
+
+6. PAYMENT GATEWAY ABSTRACTION: PaymentService calls the PaymentGateway
+   interface. The SimulatedPaymentGateway is the default; replace with
+   StripeGateway / RazorpayGateway in production without changing this file.
 """
 
 import uuid
@@ -31,6 +35,9 @@ from app.models.booking import Booking, BookingStatus, ALLOWED_TRANSITIONS
 from app.models.payment import Payment, PaymentStatus
 from app.repositories.booking_repository import BookingRepository
 from app.repositories.payment_repository import PaymentRepository
+from app.integrations.payments.simulator import SimulatedPaymentGateway
+from app.services.audit_service import AuditService
+from app.models.audit_log import AuditEventType
 from app.utils.exceptions import (
     NotFoundError,
     BadRequestError,
@@ -47,6 +54,7 @@ class PaymentService:
         self.db = db
         self.booking_repo = BookingRepository(db)
         self.payment_repo = PaymentRepository(db)
+        self.audit = AuditService(db)
 
     def process_payment(
         self,
@@ -57,8 +65,13 @@ class PaymentService:
         """
         Process a simulated payment for a booking.
 
-        In production, this would call a real payment gateway.
-        The simulate_status parameter enables deterministic testing.
+        Flow:
+          1. Lock booking row (prevent concurrent payment races)
+          2. Validate ownership and state (must be PENDING)
+          3. Prevent duplicate payments
+          4. Call payment gateway (SimulatedPaymentGateway in this assignment)
+          5. Create Payment record with gateway result
+          6. Update Booking status atomically
         """
         # 1. Find booking with row lock to prevent concurrent payment race
         booking = self.booking_repo.get_by_id_for_update(booking_id)
@@ -75,31 +88,57 @@ class PaymentService:
                 detail=f"Cannot pay for booking with status '{booking.status.value}'"
             )
 
-        # 4. Prevent duplicate payments
+        # 4. Prevent duplicate payments (application-level guard)
         existing_payment = self.payment_repo.get_by_booking_id(booking_id)
         if existing_payment:
             raise ConflictError(detail="Payment already exists for this booking")
 
-        # 5. Determine payment status
-        payment_status = (
-            PaymentStatus.SUCCESS if simulate_status == "SUCCESS" else PaymentStatus.FAILED
+        # 5. Call the payment gateway — pure simulation, no DB writes inside
+        gateway = SimulatedPaymentGateway(simulate_status=simulate_status)
+        gateway_result = gateway.charge(
+            amount=booking.amount,
+            currency="INR",
+            reference=str(booking_id),
         )
 
-        # 6. Create payment with amount from booking (NOT from client)
+        # 6. Map gateway result to internal status
+        payment_status = (
+            PaymentStatus.SUCCESS if gateway_result.success else PaymentStatus.FAILED
+        )
+
+        # 7. Create payment record with provider_event_id from gateway
         payment = Payment(
             booking_id=booking_id,
             amount=booking.amount,
             status=payment_status,
+            provider_event_id=gateway_result.provider_event_id,
         )
         self.payment_repo.create(payment)
 
-        # 7. Update booking status atomically
-        if payment_status == PaymentStatus.SUCCESS:
-            booking.status = BookingStatus.CONFIRMED
-        else:
-            booking.status = BookingStatus.FAILED
+        # 8. Update booking status atomically
+        booking.status = (
+            BookingStatus.CONFIRMED if gateway_result.success else BookingStatus.FAILED
+        )
 
-        # 8. Commit both payment and booking update in one transaction
+        # 9. Audit event
+        self.audit.log(
+            event_type=(
+                AuditEventType.PAYMENT_SUCCESS
+                if gateway_result.success
+                else AuditEventType.PAYMENT_FAILED
+            ),
+            actor_user_id=user_id,
+            entity_type="payment",
+            entity_id=str(payment.id),
+            metadata={
+                "booking_id": str(booking_id),
+                "amount": str(booking.amount),
+                "provider_event_id": gateway_result.provider_event_id,
+                "status": payment_status.value,
+            },
+        )
+
+        # 10. Commit payment, booking update, and audit log in one transaction
         try:
             self.db.commit()
             self.db.refresh(payment)
@@ -115,6 +154,7 @@ class PaymentService:
                 "booking_id": str(booking_id),
                 "payment_id": str(payment.id),
                 "status": payment_status.value,
+                "provider_event_id": gateway_result.provider_event_id,
             },
         )
         return payment
@@ -137,6 +177,12 @@ class PaymentService:
         # 1. Idempotency check — fast path for duplicate webhooks
         existing = self.payment_repo.get_by_provider_event_id(event_id)
         if existing:
+            self.audit.log(
+                event_type=AuditEventType.WEBHOOK_DUPLICATE,
+                entity_type="payment",
+                entity_id=str(existing.id),
+                metadata={"event_id": event_id},
+            )
             logger.info(
                 "Duplicate webhook ignored",
                 extra={"event": "webhook_duplicate", "event_id": event_id},
@@ -191,10 +237,25 @@ class PaymentService:
         # 8. Update booking status
         booking.status = target_booking_status
 
-        # 9. Atomic commit — if UNIQUE constraint fails, handle gracefully
+        # 9. Audit event
+        self.audit.log(
+            event_type=AuditEventType.WEBHOOK_PROCESSED,
+            actor_user_id=booking.user_id,
+            entity_type="payment",
+            entity_id=str(payment.id),
+            metadata={
+                "event_id": event_id,
+                "booking_id": str(booking_id),
+                "amount": str(amount),
+                "status": payment_status.value,
+            },
+        )
+
+        # 10. Atomic commit — if UNIQUE constraint fails, handle gracefully
         try:
             self.db.commit()
             self.db.refresh(payment)
+
         except IntegrityError:
             self.db.rollback()
             # Race condition: another request already processed this event

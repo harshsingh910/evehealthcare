@@ -46,6 +46,10 @@ class Settings(BaseSettings):
     # Server
     PORT: int = Field(default=8000)
 
+    # CORS — comma-separated list of allowed origins.
+    # If empty, development allows all origins and production remains restrictive ([]).
+    CORS_ALLOWED_ORIGINS: str = Field(default="")
+
     model_config = {
         "env_file": ".env",
         "env_file_encoding": "utf-8",

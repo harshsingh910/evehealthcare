@@ -20,6 +20,7 @@ from app.models.diagnostic_test import DiagnosticTest  # noqa: F401
 from app.models.centre_test import CentreTest  # noqa: F401
 from app.models.booking import Booking  # noqa: F401
 from app.models.payment import Payment  # noqa: F401
+from app.models.audit_log import AuditLog  # noqa: F401
 
 config = context.config
 

@@ -14,9 +14,11 @@ from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 
 from app.models.booking import Booking, BookingStatus, ALLOWED_TRANSITIONS
+from app.models.audit_log import AuditEventType
 from app.repositories.booking_repository import BookingRepository
 from app.repositories.centre_repository import CentreRepository
 from app.repositories.test_repository import TestRepository
+from app.services.audit_service import AuditService
 from app.utils.exceptions import NotFoundError, BadRequestError, ForbiddenError
 from app.utils.pagination import paginate, build_paginated_response
 from app.schemas.booking import BookingResponse
@@ -31,6 +33,8 @@ class BookingService:
         self.booking_repo = BookingRepository(db)
         self.centre_repo = CentreRepository(db)
         self.test_repo = TestRepository(db)
+        self.audit = AuditService(db)
+
 
     def create_booking(
         self,
@@ -80,6 +84,22 @@ class BookingService:
         )
         booking = self.booking_repo.create(booking)
 
+        self.audit.log(
+            event_type=AuditEventType.BOOKING_CREATED,
+            actor_user_id=user_id,
+            entity_type="booking",
+            entity_id=str(booking.id),
+            metadata={
+                "centre_id": str(centre_id),
+                "test_id": str(test_id),
+                "amount": str(centre_test.price),
+            },
+        )
+        try:
+            self.db.commit()
+        except Exception:
+            pass
+
         logger.info(
             "Booking created",
             extra={
@@ -90,6 +110,7 @@ class BookingService:
             },
         )
         return booking
+
 
     def get_booking(self, booking_id: uuid.UUID, user_id: uuid.UUID) -> Booking:
         """Get a booking, enforcing ownership authorization."""
@@ -146,7 +167,14 @@ class BookingService:
             )
 
         booking.status = BookingStatus.CANCELLED
+        self.audit.log(
+            event_type=AuditEventType.BOOKING_CANCELLED,
+            actor_user_id=user_id,
+            entity_type="booking",
+            entity_id=str(booking.id),
+        )
         booking = self.booking_repo.save(booking)
+
 
         logger.info(
             "Booking cancelled",
